@@ -1,0 +1,20 @@
+# Build output
+build/
+*.xcuserdatad
+*.xcworkspace
+xcuserdata/
+
+# macOS
+.DS_Store
+
+# IDE
+*.swp
+*~
+
+# Logs (contain potentially sensitive data)
+*.log
+
+# Secrets
+.env
+*.pem
+*.key
