@@ -24,16 +24,16 @@ class Logger {
         }
     }
 
-    func log(used: Int?, total: Int?, success: Bool) {
+    func log(category: String, used: Int?, total: Int?, success: Bool) {
         let timestamp = ISO8601DateFormatter().string(from: Date())
         let statusSymbol = success ? "✓" : "✗"
 
         var logLine: String
         if success, let used = used, let total = total {
             let pctRemaining = 100 - (Double(used) / Double(total) * 100)
-            logLine = "[\(timestamp)] \(used)/\(total) | \(String(format: "%.1f", pctRemaining))% remaining | \(statusSymbol)\n"
+            logLine = "[\(timestamp)] [\(category)] \(used)/\(total) | \(String(format: "%.1f", pctRemaining))% remaining | \(statusSymbol)\n"
         } else {
-            logLine = "[\(timestamp)] --/-- | --% remaining | \(statusSymbol)\n"
+            logLine = "[\(timestamp)] [\(category)] --/-- | --% remaining | \(statusSymbol)\n"
         }
 
         if let data = logLine.data(using: .utf8) {
@@ -47,5 +47,13 @@ class Logger {
                 try? data.write(to: URL(fileURLWithPath: logFilePath))
             }
         }
+    }
+
+    func log(category: String, success: Bool) {
+        log(category: category, used: nil, total: nil, success: success)
+    }
+
+    func log(used: Int?, total: Int?, success: Bool) {
+        log(category: "text", used: used, total: total, success: success)
     }
 }

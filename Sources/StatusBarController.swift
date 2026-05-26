@@ -1,56 +1,125 @@
 import AppKit
 
-class StatusBarController {
+class StatusBarController: NSObject {
 
     private var statusItem: NSStatusItem
     private var quotaService: QuotaService
     private var refreshTimer: Timer?
     private var logger: Logger
 
-    private var currentQuota: QuotaData?
+    private var currentQuotas: [CategoryQuota] = []
     private var isErrorState = false
 
-    init() {
+    override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         quotaService = QuotaService()
         logger = Logger()
-
+        super.init()
         setupStatusItem()
         setupMenu()
+        startAutoRefresh()
 
         Task {
             await refreshQuota()
         }
-
-        startAutoRefresh()
     }
 
     private func setupStatusItem() {
         if let button = statusItem.button {
             button.title = "..."
-            button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+            button.imagePosition = .imageLeft
+        }
+    }
+
+    private func updateStatusIcon(percentage: Double?) {
+        guard let button = statusItem.button else { return }
+
+        if let pct = percentage {
+            let intPct = Int(pct.rounded())
+
+            let color: NSColor
+            if pct > 50 {
+                color = .systemGreen
+            } else if pct > 20 {
+                color = .systemYellow
+            } else {
+                color = .systemRed
+            }
+
+            let attrs: [NSAttributedString.Key: Any] = [
+                .foregroundColor: color,
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+            ]
+            button.attributedTitle = NSAttributedString(string: "\(intPct)%", attributes: attrs)
+        } else {
+            let attrs: [NSAttributedString.Key: Any] = [
+                .foregroundColor: NSColor.secondaryLabelColor,
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+            ]
+            button.attributedTitle = NSAttributedString(string: "?", attributes: attrs)
         }
     }
 
     private func setupMenu() {
         let menu = NSMenu()
+        menu.delegate = self
+        statusItem.menu = menu
+        rebuildMenu()
+    }
 
-        let infoItem = NSMenuItem(title: "📊 -- / -- requests", action: nil, keyEquivalent: "")
-        infoItem.isEnabled = false
-        infoItem.tag = 100
-        menu.addItem(infoItem)
+    private func rebuildMenu() {
+        guard let menu = statusItem.menu else { return }
+        menu.removeAllItems()
+
+        // Header
+        let headerItem = NSMenuItem(title: "📊 MiniMax Quota", action: nil, keyEquivalent: "")
+        headerItem.isEnabled = false
+        menu.addItem(headerItem)
 
         menu.addItem(NSMenuItem.separator())
 
-        let copyItem = NSMenuItem(title: "📋 Copy % to clipboard", action: #selector(copyToClipboard), keyEquivalent: "c")
-        copyItem.target = self
-        menu.addItem(copyItem)
+        // All quotas
+        let allCategories: [(QuotaCategory, String)] = [
+            (.text, "📝 Text"),
+            (.speech, "🔊 Speech"),
+            (.music, "🎵 Music"),
+            (.video, "🎬 Video"),
+            (.image, "🖼️ Image"),
+            (.lyrics, "📝 Lyrics"),
+            (.coding, "💻 Coding")
+        ]
 
-        let dashboardItem = NSMenuItem(title: "🌐 Open MiniMax dashboard", action: #selector(openDashboard), keyEquivalent: "d")
+        for (category, label) in allCategories {
+            if let quota = currentQuotas.first(where: { $0.category == category }) {
+                let pct = Int(quota.pctRemaining.rounded())
+                let used = formatNumber(quota.used)
+                let total = formatNumber(quota.total)
+                let color = colorEmoji(for: quota.pctRemaining)
+                let item = NSMenuItem(title: "\(color) \(label): \(used)/\(total) (\(pct)%)", action: nil, keyEquivalent: "")
+                item.isEnabled = false
+                menu.addItem(item)
+            } else {
+                let item = NSMenuItem(title: "⚪ \(label): --", action: nil, keyEquivalent: "")
+                item.isEnabled = false
+                menu.addItem(item)
+            }
+        }
+
+        menu.addItem(NSMenuItem.separator())
+
+        // Copy main percentage
+        if let mainQuota = currentQuotas.first(where: { $0.category == .text }) {
+            let pct = Int(mainQuota.pctRemaining.rounded())
+            let copyItem = NSMenuItem(title: "📋 Copy main % (\(pct)%)", action: #selector(copyToClipboard), keyEquivalent: "c")
+            copyItem.target = self
+            menu.addItem(copyItem)
+        }
+
+        let dashboardItem = NSMenuItem(title: "🌐 Open MiniMax Dashboard", action: #selector(openDashboard), keyEquivalent: "d")
         dashboardItem.target = self
         menu.addItem(dashboardItem)
 
-        let refreshItem = NSMenuItem(title: "🔄 Refresh now", action: #selector(refreshNow), keyEquivalent: "r")
+        let refreshItem = NSMenuItem(title: "🔄 Refresh Now", action: #selector(refreshNow), keyEquivalent: "r")
         refreshItem.target = self
         menu.addItem(refreshItem)
 
@@ -59,8 +128,16 @@ class StatusBarController {
         let quitItem = NSMenuItem(title: "❌ Quit", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
+    }
 
-        statusItem.menu = menu
+    private func colorEmoji(for pct: Double) -> String {
+        if pct > 50 {
+            return "🟢"
+        } else if pct > 20 {
+            return "🟡"
+        } else {
+            return "🔴"
+        }
     }
 
     private func startAutoRefresh() {
@@ -74,51 +151,29 @@ class StatusBarController {
     @MainActor
     private func refreshQuota() async {
         do {
-            let quota = try await quotaService.fetchQuota()
-            currentQuota = quota
+            let quotas = try await quotaService.fetchAllQuotas()
+            currentQuotas = quotas
             isErrorState = false
-            updateUI(with: quota)
-            logger.log(used: quota.used, total: quota.total, success: true)
+
+            if let mainQuota = quotas.first(where: { $0.category == .text }) {
+                updateStatusIcon(percentage: mainQuota.pctRemaining)
+                logger.log(category: "text", used: mainQuota.used, total: mainQuota.total, success: true)
+            } else if let mainQuota = quotas.first {
+                updateStatusIcon(percentage: mainQuota.pctRemaining)
+            }
+
+            rebuildMenu()
         } catch {
             isErrorState = true
-            updateUIForError()
-            logger.log(used: nil, total: nil, success: false)
-        }
-    }
-
-    private func updateUI(with quota: QuotaData) {
-        guard let button = statusItem.button else { return }
-
-        let pctRemainingInt = Int(quota.pctRemaining.rounded())
-        button.title = "\(pctRemainingInt)% ↓"
-
-        let pctUsed = 100 - quota.pctRemaining
-        let usedFormatted = formatNumber(quota.used)
-        let totalFormatted = formatNumber(quota.total)
-
-        if quota.pctRemaining > 50 {
-            button.contentTintColor = .systemGreen
-        } else if quota.pctRemaining > 20 {
-            button.contentTintColor = .systemYellow
-        } else {
-            button.contentTintColor = .systemRed
-        }
-
-        button.toolTip = "MiniMax M2: \(usedFormatted)/\(totalFormatted) requests (\(String(format: "%.1f", pctUsed))% usado)"
-
-        if let menu = statusItem.menu, let infoItem = menu.item(withTag: 100) {
-            infoItem.title = "📊 \(usedFormatted) / \(totalFormatted) requests"
-        }
-    }
-
-    private func updateUIForError() {
-        guard let button = statusItem.button else { return }
-        button.title = "⚠️ Error"
-        button.contentTintColor = .systemRed
-        button.toolTip = "Failed to fetch MiniMax quota"
-
-        if let menu = statusItem.menu, let infoItem = menu.item(withTag: 100) {
-            infoItem.title = "📊 -- / -- requests"
+            if let button = statusItem.button {
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .foregroundColor: NSColor.systemRed,
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+                ]
+                button.attributedTitle = NSAttributedString(string: "⚠️", attributes: attrs)
+            }
+            logger.log(category: "error", success: false)
+            rebuildMenu()
         }
     }
 
@@ -129,11 +184,12 @@ class StatusBarController {
     }
 
     @objc private func copyToClipboard() {
-        guard let quota = currentQuota else { return }
-        let pctRemainingInt = Int(quota.pctRemaining.rounded())
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString("\(pctRemainingInt)%", forType: .string)
+        if let mainQuota = currentQuotas.first(where: { $0.category == .text }) {
+            let pct = Int(mainQuota.pctRemaining.rounded())
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString("\(pct)%", forType: .string)
+        }
     }
 
     @objc private func openDashboard() {
@@ -155,5 +211,15 @@ class StatusBarController {
 
     deinit {
         refreshTimer?.invalidate()
+    }
+}
+
+// MARK: - NSMenuDelegate
+
+extension StatusBarController: NSMenuDelegate {
+    func menuWillOpen(_ menu: NSMenu) {
+        Task {
+            await refreshQuota()
+        }
     }
 }
