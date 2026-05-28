@@ -23,7 +23,7 @@ macOS menu bar app that monitors your MiniMax API quota in real-time.
 ## Requirements
 
 - macOS 12.0+
-- **MiniMax CLI app (`mmx`) installed and authenticated** — [Install from GitHub](https://github.com/MiniMaxAi/mmx)
+- **MiniMax CLI app (`mmx`) installed and authenticated** — [Install from GitHub](https://github.com/MiniMax-AI/cli)
 
 > ⚠️ This app does NOT include the MiniMax CLI. You must install [`mmx`](https://github.com/MiniMaxAi/mmx) separately and run `mmx auth login` before using MiniMaxQuota.
 
@@ -81,9 +81,13 @@ rm -f ~/.hermes/logs/minimax-quota.log
 
 **First time setup**: You need the MiniMax CLI installed on your system.
 
-1. Install `mmx` via npm:
+1. Install `mmx` via npm (requires Node.js):
    ```bash
    npm install -g mmx-cli
+   ```
+   Or if using Homebrew on Apple Silicon:
+   ```bash
+   /opt/homebrew/bin/brew install node && /opt/homebrew/bin/npm install -g mmx-cli
    ```
 
 2. Authenticate:
