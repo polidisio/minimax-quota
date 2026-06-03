@@ -70,15 +70,14 @@ class QuotaService {
     private let timeoutSeconds: TimeInterval = 10
 
     private let categoryMap: [String: QuotaCategory] = [
-        "text_generation": .text,
-        "speech_generation": .speech,
-        "music_generation": .music,
-        "video_generation": .video,
-        "video_fast_generation": .video,
-        "image_generation": .image,
-        "lyrics_generation": .lyrics,
-        "coding-plan-vlm": .coding,
-        "coding-plan-search": .coding
+        "text": .text,
+        "speech": .speech,
+        "music": .music,
+        "video": .video,
+        "image": .image,
+        "lyrics": .lyrics,
+        "coding": .coding,
+        "general": .text
     ]
 
     func fetchAllQuotas() async throws -> [CategoryQuota] {
@@ -177,31 +176,30 @@ class QuotaService {
         }
 
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let categoryRemains = json["category_remains"] as? [[String: Any]] else {
+              let modelRemains = json["model_remains"] as? [[String: Any]] else {
             throw QuotaError.parseFailed
         }
 
         var quotas: [CategoryQuota] = []
 
-        for category in categoryRemains {
-            guard let categoryName = category["category"] as? String,
-                  let mappedCategory = categoryMap[categoryName] else {
+        for model in modelRemains {
+            guard let modelName = model["model_name"] as? String,
+                  let mappedCategory = categoryMap[modelName] else {
                 continue
             }
 
-            let weeklyTotal = category["current_weekly_total_count"] as? Int ?? 0
-            let weeklyUsed = category["current_weekly_usage_count"] as? Int ?? 0
-            let intervalTotal = category["current_interval_total_count"] as? Int ?? 0
-            let intervalUsed = category["current_interval_usage_count"] as? Int ?? 0
+            let remainingPercent = model["current_interval_remaining_percent"] as? Double ?? 100
+            let pctRemaining = remainingPercent
 
-            let total = intervalTotal > 0 ? intervalTotal : weeklyTotal
-            let used = intervalTotal > 0 ? intervalUsed : weeklyUsed
+            // Use a synthetic total/used based on remaining percent
+            // If remaining is 85%, assume total=100 and used=15
+            let total = 100
+            let used = Int((100 - pctRemaining) * Double(total) / 100)
 
-            if total == 0 {
+            if pctRemaining <= 0 {
                 continue
             }
 
-            let pctRemaining = 100 - (Double(used) / Double(total) * 100)
             let quota = CategoryQuota(
                 category: mappedCategory,
                 used: used,
@@ -224,16 +222,24 @@ class QuotaService {
             throw QuotaError.parseFailed
         }
 
+        // Find first model with an actual quota (non-zero total)
         for model in modelRemains {
             guard let modelName = model["model_name"] as? String,
-                  modelName.hasPrefix("MiniMax-M"),
-                  let total = model["current_interval_total_count"] as? Int,
-                  let used = model["current_interval_usage_count"] as? Int else {
+                  modelName.hasPrefix("MiniMax-M") || modelName == "general" else {
                 continue
             }
 
-            let pctRemaining = 100 - (Double(used) / Double(total) * 100)
-            return QuotaData(used: used, total: total, pctRemaining: pctRemaining)
+            let total = model["current_interval_total_count"] as? Int ?? 100
+            let remainingPercent = model["current_interval_remaining_percent"] as? Double ?? 100
+
+            if total == 0 {
+                // Use remaining percent directly
+                let used = Int((100 - remainingPercent) * 100 / 100)
+                return QuotaData(used: used, total: 100, pctRemaining: remainingPercent)
+            }
+
+            let used = Int((100 - remainingPercent) * Double(total) / 100)
+            return QuotaData(used: used, total: total, pctRemaining: remainingPercent)
         }
 
         throw QuotaError.parseFailed
